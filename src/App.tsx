@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useReadContract, useWriteContract, useBalance, useSendTransaction } from 'wagmi';
-import { parseUnits, formatUnits, parseEther } from 'viem';
+import { useAccount, useReadContract, useWriteContract, useBalance } from 'wagmi';
+import { formatUnits, parseEther } from 'viem';
 import { Toaster, toast } from 'sonner';
 
 // ──────────────── Contract Config ────────────────
@@ -364,3 +364,4 @@ export default function App() {
     </div>
   );
 }
+
