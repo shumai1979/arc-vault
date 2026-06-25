@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100;
+  }
+}
+
+@keyframes shimmer { 100% { transform: translateX(400%); } }
