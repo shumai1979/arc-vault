@@ -1,108 +1,56 @@
-import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets';
-import { ethers } from 'ethers';
-import forge from 'node-forge';
-
-const VAULT_ADDRESS = '0xF10a90f7ae599c43da0bE945401d8EB588854d97';
-const HOOK_ADDRESS  = '0x0000000000000000000000000000000000000000'; // placeholder
-
-const HOOK_ABI = [
-  {
-    "inputs": [
-      { "internalType": "int256", "name": "amountToRebalance", "type": "int256" },
-      { "internalType": "bool", "name": "simulatedSuccess", "type": "bool" }
-    ],
-    "name": "executeAIRebalance",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-];
-
-function getCircleClient() {
-  const apiKey        = process.env.CIRCLE_API_KEY;
-  const entitySecret  = process.env.CIRCLE_ENTITY_SECRET;
-
-  if (!apiKey || !entitySecret) {
-    throw new Error('CIRCLE_API_KEY or CIRCLE_ENTITY_SECRET not set in environment variables.');
-  }
-
-  return initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
-}
-
-function encryptEntitySecret(entitySecret, publicKeyPem) {
-  const publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
-  const encrypted = publicKey.encrypt(
-    forge.util.hexToBytes(entitySecret),
-    'RSA-OAEP',
-    { md: forge.md.sha256.create(), mgf1: { md: forge.md.sha256.create() } }
-  );
-  return forge.util.encode64(encrypted);
-}
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
-  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    const { userPrompt, simulatedApy } = req.body;
-    const walletId     = process.env.CIRCLE_WALLET_ID;
-    const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
+    const { userPrompt = '', simulatedApy = 4.2 } = req.body ?? {};
 
-    if (!walletId) {
-      return res.status(500).json({ error: 'CIRCLE_WALLET_ID not configured.' });
-    }
+    // Check that Circle credentials are configured
+    const hasCircle = !!(process.env.CIRCLE_API_KEY && process.env.CIRCLE_WALLET_ID);
 
-    // 1. Parse the target APY from the user prompt
-    let targetApy = 5;
-    if (userPrompt && userPrompt.match(/(\d+)%/)) {
-      targetApy = parseInt(userPrompt.match(/(\d+)%/)[1]);
-    }
+    // Parse target APY from the user prompt
+    const match = userPrompt.match(/(\d+(?:\.\d+)?)%/);
+    const targetApy = match ? parseFloat(match[1]) : 5;
 
-    const currentApy = simulatedApy || 4.2;
-
-    // 2. AI Decision Logic
-    let decision  = 'HOLD';
-    let reasoning = `APY (${currentApy}%) meets target (${targetApy}%). Holding steady.`;
-
-    if (currentApy < targetApy) {
-      decision  = 'REBALANCE';
-      reasoning = `APY (${currentApy}%) is below target (${targetApy}%). Initiating rebalance via Circle Wallet.`;
-    }
+    // AI Decision Logic
+    const decision  = simulatedApy < targetApy ? 'REBALANCE' : 'HOLD';
+    const reasoning = decision === 'REBALANCE'
+      ? `APY (${simulatedApy}%) is below target (${targetApy}%). Initiating rebalance.`
+      : `APY (${simulatedApy}%) meets target (${targetApy}%). Holding steady.`;
 
     let txHash      = null;
     let circleStatus = 'N/A';
 
-    // 3. If REBALANCE, execute via Circle Developer Wallet
-    if (decision === 'REBALANCE') {
+    // If REBALANCE and Circle is configured, attempt transaction via Circle REST API
+    if (decision === 'REBALANCE' && hasCircle) {
       try {
-        const client = getCircleClient();
+        const idempotencyKey = `rebalance-${Date.now()}`;
 
-        // Get Circle public key and encrypt entity secret for this request
-        const pkResponse           = await client.getPublicKey();
-        const entitySecretCiphertext = encryptEntitySecret(entitySecret, pkResponse.data.publicKey);
-
-        // Encode the contract call
-        const iface       = new ethers.Interface(HOOK_ABI);
-        const callData    = iface.encodeFunctionData('executeAIRebalance', [
-          ethers.parseEther('100'), // rebalance 100 USDC
-          true
-        ]);
-
-        // Send the transaction via Circle (they sign it securely)
-        const txResponse = await client.createTransaction({
-          walletId,
-          contractAddress : VAULT_ADDRESS,
-          callData,
-          fee             : { type: 'EIP1559', maxFee: '20', priorityFee: '10' },
-          entitySecretCiphertext,
-          idempotencyKey  : `rebalance-${Date.now()}`
+        // Call Circle API directly via fetch (no heavy SDK needed in serverless)
+        const circleRes = await fetch('https://api.circle.com/v1/w3s/developer/transactions/contractExecution', {
+          method : 'POST',
+          headers: {
+            'Content-Type' : 'application/json',
+            'Authorization': `Bearer ${process.env.CIRCLE_API_KEY}`,
+          },
+          body: JSON.stringify({
+            idempotencyKey,
+            walletId       : process.env.CIRCLE_WALLET_ID,
+            contractAddress: '0xF10a90f7ae599c43da0bE945401d8EB588854d97',
+            abiFunctionSignature: 'executeAIRebalance(int256,bool)',
+            abiParameters  : ['100000000000000000000', 'true'],
+            fee            : { type: 'EIP1559', maxFee: '20', priorityFee: '10' },
+          }),
         });
 
-        txHash      = txResponse?.data?.transaction?.txHash || 'Pending...';
-        circleStatus = txResponse?.data?.transaction?.state || 'SUBMITTED';
-      } catch (circleErr) {
-        console.warn('Circle TX failed (testnet may not support this call yet):', circleErr?.response?.data || circleErr.message);
+        const circleData = await circleRes.json();
+        txHash      = circleData?.data?.transaction?.txHash ?? 'Pending…';
+        circleStatus = circleData?.data?.transaction?.state ?? 'SUBMITTED';
+      } catch {
         txHash      = 'SIMULATED (testnet)';
         circleStatus = 'SIMULATED';
       }
@@ -114,12 +62,13 @@ export default async function handler(req, res) {
       reasoning,
       txHash,
       circleStatus,
+      circleConfigured: hasCircle,
       reputationImpact: decision === 'REBALANCE' ? '+5' : '0',
-      timestamp       : new Date().toISOString()
+      timestamp       : new Date().toISOString(),
     });
 
-  } catch (error) {
-    console.error('Agent Error:', error);
-    return res.status(500).json({ error: 'Agent execution failed.', detail: error.message });
+  } catch (err) {
+    console.error('Agent Error:', err);
+    return res.status(500).json({ error: 'Agent execution failed.', detail: String(err) });
   }
 }
