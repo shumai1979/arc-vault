@@ -1,11 +1,3 @@
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'w3m-button': any;
-    }
-  }
-}
-
 import { useState } from 'react';
 import { useAccount, useBalance, useWriteContract, useReadContract } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
@@ -111,7 +103,8 @@ export default function App() {
             <button onClick={() => setActiveTab('agent')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'agent' ? 'bg-blue-500/20 text-blue-400' : 'text-white/60 hover:text-white'}`}>
               <Bot className="w-4 h-4" /> AI Agent
             </button>
-             {/* @ts-ignore */} <w3m-button />
+             {/* @ts-ignore */} {/* @ts-ignore */}
+<w3m-button></w3m-button>
           </div>
         </div>
       </nav>
@@ -121,7 +114,8 @@ export default function App() {
           <div className="text-center mt-20">
             <h1 className="text-5xl font-bold mb-6 bg-gradient-to-r from-white to-white/50 bg-clip-text text-transparent">The Next Evolution of DeFi</h1>
             <p className="text-xl text-white/50 mb-8 max-w-2xl mx-auto">Connect your wallet to experience frictionless native USDC deposits and autonomous AI-driven yields on the Arc Testnet.</p>
-            <div className="flex justify-center"> {/* @ts-ignore */} <w3m-button /></div>
+            <div className="flex justify-center"> {/* @ts-ignore */} {/* @ts-ignore */}
+<w3m-button></w3m-button></div>
           </div>
         ) : (
           <div className="space-y-6">
