@@ -1,11 +1,43 @@
+import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets';
 import { ethers } from 'ethers';
+import forge from 'node-forge';
 
-// Arc Testnet RPC
-const RPC_URL = 'https://testnet.arcscan.app/rpc';
-
-// Our Deployed Contracts
-const REGISTRY_ADDRESS = '0x7199b07975D22C6A2AD2a0EdE47bd434b9a00745';
 const VAULT_ADDRESS = '0xF10a90f7ae599c43da0bE945401d8EB588854d97';
+const HOOK_ADDRESS  = '0x0000000000000000000000000000000000000000'; // placeholder
+
+const HOOK_ABI = [
+  {
+    "inputs": [
+      { "internalType": "int256", "name": "amountToRebalance", "type": "int256" },
+      { "internalType": "bool", "name": "simulatedSuccess", "type": "bool" }
+    ],
+    "name": "executeAIRebalance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+];
+
+function getCircleClient() {
+  const apiKey        = process.env.CIRCLE_API_KEY;
+  const entitySecret  = process.env.CIRCLE_ENTITY_SECRET;
+
+  if (!apiKey || !entitySecret) {
+    throw new Error('CIRCLE_API_KEY or CIRCLE_ENTITY_SECRET not set in environment variables.');
+  }
+
+  return initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
+}
+
+function encryptEntitySecret(entitySecret, publicKeyPem) {
+  const publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
+  const encrypted = publicKey.encrypt(
+    forge.util.hexToBytes(entitySecret),
+    'RSA-OAEP',
+    { md: forge.md.sha256.create(), mgf1: { md: forge.md.sha256.create() } }
+  );
+  return forge.util.encode64(encrypted);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,44 +46,80 @@ export default async function handler(req, res) {
 
   try {
     const { userPrompt, simulatedApy } = req.body;
-    console.log("Agent received prompt:", userPrompt);
+    const walletId     = process.env.CIRCLE_WALLET_ID;
+    const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
 
-    // ZERO WALLET RISK: The agent uses its own isolated Testnet wallet to pay gas.
-    // In production, this private key would be in Vercel Environment Variables.
-    // For this demo, we use a randomly generated testnet wallet that we will fund with testnet gas.
-    // Or we just return the transaction payload for the user to simulate if we don't want to manage private keys at all!
-    // But since the agent is autonomous, we will simulate the "AI" decision here.
-    
-    // 1. Simulate AI reading market conditions
-    let targetApy = 5; // Default 5%
-    if (userPrompt && userPrompt.includes('10%')) targetApy = 10;
-    
-    let decision = "HOLD";
-    let action = "No action needed.";
-    let simulatedSuccess = true;
-
-    if (simulatedApy < targetApy) {
-      decision = "REBALANCE";
-      action = `APY (${simulatedApy}%) is below target (${targetApy}%). Rebalancing to next optimal pool.`;
-    } else {
-        action = `APY (${simulatedApy}%) is meeting target (${targetApy}%). Holding steady.`;
+    if (!walletId) {
+      return res.status(500).json({ error: 'CIRCLE_WALLET_ID not configured.' });
     }
 
-    // Return the Agent's decision and the required action
-    // To strictly enforce ZERO WALLET RISK and ZERO COST, this endpoint just acts as the "Oracle / AI Brain".
-    // It returns the decision, and the frontend can execute it if it wants, OR in a real autonomous setup, 
-    // the Vercel backend would sign and broadcast it using `ethers.Wallet`.
-    
+    // 1. Parse the target APY from the user prompt
+    let targetApy = 5;
+    if (userPrompt && userPrompt.match(/(\d+)%/)) {
+      targetApy = parseInt(userPrompt.match(/(\d+)%/)[1]);
+    }
+
+    const currentApy = simulatedApy || 4.2;
+
+    // 2. AI Decision Logic
+    let decision  = 'HOLD';
+    let reasoning = `APY (${currentApy}%) meets target (${targetApy}%). Holding steady.`;
+
+    if (currentApy < targetApy) {
+      decision  = 'REBALANCE';
+      reasoning = `APY (${currentApy}%) is below target (${targetApy}%). Initiating rebalance via Circle Wallet.`;
+    }
+
+    let txHash      = null;
+    let circleStatus = 'N/A';
+
+    // 3. If REBALANCE, execute via Circle Developer Wallet
+    if (decision === 'REBALANCE') {
+      try {
+        const client = getCircleClient();
+
+        // Get Circle public key and encrypt entity secret for this request
+        const pkResponse           = await client.getPublicKey();
+        const entitySecretCiphertext = encryptEntitySecret(entitySecret, pkResponse.data.publicKey);
+
+        // Encode the contract call
+        const iface       = new ethers.Interface(HOOK_ABI);
+        const callData    = iface.encodeFunctionData('executeAIRebalance', [
+          ethers.parseEther('100'), // rebalance 100 USDC
+          true
+        ]);
+
+        // Send the transaction via Circle (they sign it securely)
+        const txResponse = await client.createTransaction({
+          walletId,
+          contractAddress : VAULT_ADDRESS,
+          callData,
+          fee             : { type: 'EIP1559', maxFee: '20', priorityFee: '10' },
+          entitySecretCiphertext,
+          idempotencyKey  : `rebalance-${Date.now()}`
+        });
+
+        txHash      = txResponse?.data?.transaction?.txHash || 'Pending...';
+        circleStatus = txResponse?.data?.transaction?.state || 'SUBMITTED';
+      } catch (circleErr) {
+        console.warn('Circle TX failed (testnet may not support this call yet):', circleErr?.response?.data || circleErr.message);
+        txHash      = 'SIMULATED (testnet)';
+        circleStatus = 'SIMULATED';
+      }
+    }
+
     return res.status(200).json({
-      agentStatus: "ONLINE",
-      decision: decision,
-      reasoning: action,
-      reputationImpact: decision === "REBALANCE" ? "+5" : "0",
-      timestamp: new Date().toISOString()
+      agentStatus     : 'ONLINE',
+      decision,
+      reasoning,
+      txHash,
+      circleStatus,
+      reputationImpact: decision === 'REBALANCE' ? '+5' : '0',
+      timestamp       : new Date().toISOString()
     });
 
   } catch (error) {
-    console.error("Agent Error:", error);
-    return res.status(500).json({ error: 'Agent execution failed.' });
+    console.error('Agent Error:', error);
+    return res.status(500).json({ error: 'Agent execution failed.', detail: error.message });
   }
 }
