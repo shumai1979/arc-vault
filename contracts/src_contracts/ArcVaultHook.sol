@@ -9,20 +9,27 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 
+interface IAgentRegistry {
+    function isAgentValid(address agentWallet) external view returns (bool);
+    function updateReputation(address agentWallet, int256 delta) external;
+}
+
 contract ArcVaultHook is BaseHook {
     using PoolIdLibrary for PoolKey;
 
     mapping(address => bool) public isVIP;
-    address public aiAgent;
+    IAgentRegistry public agentRegistry;
     uint256 public lastRebalanceTime;
     uint24 public baseFee = 3000;
     mapping(PoolId => uint256) public volatilityIndex;
 
     error NotVIP();
-    error OnlyAIAgent();
+    error InvalidAgent();
 
-    constructor(IPoolManager _poolManager, address _aiAgent) BaseHook(_poolManager) {
-        aiAgent = _aiAgent;
+    event AIRebalanced(address indexed agent, uint256 timestamp, int256 amount);
+
+    constructor(IPoolManager _poolManager, address _registry) BaseHook(_poolManager) {
+        agentRegistry = IAgentRegistry(_registry);
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
@@ -66,9 +73,20 @@ contract ArcVaultHook is BaseHook {
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    function executeAIRebalance(PoolKey calldata key, int256 amountToRebalance) external {
-        if (msg.sender != aiAgent) revert OnlyAIAgent();
+    // Called by the Autonomous AI Agent
+    function executeAIRebalance(PoolKey calldata key, int256 amountToRebalance, bool simulatedSuccess) external {
+        if (!agentRegistry.isAgentValid(msg.sender)) revert InvalidAgent();
+        
         lastRebalanceTime = block.timestamp;
+        
+        // Reward or penalize the agent based on performance (mock simulation)
+        if (simulatedSuccess) {
+            agentRegistry.updateReputation(msg.sender, 5); // +5 rep
+        } else {
+            agentRegistry.updateReputation(msg.sender, -10); // -10 rep
+        }
+        
+        emit AIRebalanced(msg.sender, block.timestamp, amountToRebalance);
     }
 
     function setVIPStatus(address user, bool status) external {
