@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'w3m-button': any;
+    }
+  }
+}
+
+import { useState } from 'react';
 import { useAccount, useBalance, useWriteContract, useReadContract } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
-import { Bot, ArrowRight, ShieldCheck, Activity, BarChart3, Database } from 'lucide-react';
+import { Bot, ArrowRight, ShieldCheck, Activity, Database } from 'lucide-react';
 
 const ARC_VAULT_ADDRESS = "0xF10a90f7ae599c43da0bE945401d8EB588854d97";
-const AGENT_REGISTRY_ADDRESS = "0x7199b07975D22C6A2AD2a0EdE47bd434b9a00745";
+// removed registry address
 const MOCK_AGENT_WALLET = "0x1111222233334444555566667777888899990000"; // Fake wallet representing the Agent
 
 // Simplified ABI
@@ -14,10 +22,7 @@ const VAULT_ABI = [
   { "inputs": [{ "internalType": "address", "name": "agentWallet", "type": "address" }], "name": "delegateToAgent", "outputs": [], "stateMutability": "nonpayable", "type": "function" }
 ];
 
-const REGISTRY_ABI = [
-  { "inputs": [{ "internalType": "string", "name": "name", "type": "string" }], "name": "registerAgent", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
-  { "inputs": [{ "internalType": "address", "name": "agentWallet", "type": "address" }], "name": "isAgentValid", "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }], "stateMutability": "view", "type": "function" }
-];
+// removed registry abi
 
 export default function App() {
   const { address, isConnected } = useAccount();
@@ -106,7 +111,7 @@ export default function App() {
             <button onClick={() => setActiveTab('agent')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'agent' ? 'bg-blue-500/20 text-blue-400' : 'text-white/60 hover:text-white'}`}>
               <Bot className="w-4 h-4" /> AI Agent
             </button>
-            <w3m-button />
+             {/* @ts-ignore */} <w3m-button />
           </div>
         </div>
       </nav>
@@ -116,7 +121,7 @@ export default function App() {
           <div className="text-center mt-20">
             <h1 className="text-5xl font-bold mb-6 bg-gradient-to-r from-white to-white/50 bg-clip-text text-transparent">The Next Evolution of DeFi</h1>
             <p className="text-xl text-white/50 mb-8 max-w-2xl mx-auto">Connect your wallet to experience frictionless native USDC deposits and autonomous AI-driven yields on the Arc Testnet.</p>
-            <div className="flex justify-center"><w3m-button /></div>
+            <div className="flex justify-center"> {/* @ts-ignore */} <w3m-button /></div>
           </div>
         ) : (
           <div className="space-y-6">
